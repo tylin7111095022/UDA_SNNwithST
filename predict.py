@@ -22,9 +22,9 @@ test_truth_dir = r"data\changgung_val\masks"
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
-    parser.add_argument('--weight', '-w', default=r'weights\in1_out2_inputpixel1\bestmodel.pth', metavar='FILE',
+    parser.add_argument('--weight', '-w', default=r'log\train_8\student_3.pth', metavar='FILE',
                         help='Specify the file in which the model is stored')
-    parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_11_2.png', help='the path of img')
+    parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_0_1.png', help='the path of img')
     parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
     
     return parser.parse_args()

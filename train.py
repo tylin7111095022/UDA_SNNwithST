@@ -12,11 +12,11 @@ warnings.filterwarnings("ignore")
 from metric import iou, compute_mIoU
 from models import UNet, InstanceNormalization_UNet
 from dataset import STDataset
-from utils import adjust_lr, cosine_decay_with_warmup
+from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train_7' #儲存模型的權重檔所在路徑
+dir_checkpoint = r'log\train_8' #儲存模型的權重檔所在路徑
 load_path = r'weights\in1_out2_inputpixel1\bestmodel.pth'
 # if not os.path.exists(dir_checkpoint):
 os.makedirs(dir_checkpoint,exist_ok=False)
@@ -28,10 +28,11 @@ def get_args():
     parser.add_argument('--warmup_epoch',type=int,default=0,metavar='E',help='warm up the student model')
     parser.add_argument('--batch','-b',type=int,dest='batch_size',default=1, help='Batch size')
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-    parser.add_argument('--init_lr','-r',type = float, default=1e-3,help='initial learning rate of model')
+    parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
     parser.add_argument("--momentum", "-m", type=float, default=0.9999, help="momentum parameter for updating teacher model.")
     parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
+    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy]')
 
     return parser.parse_args()
 
@@ -107,6 +108,7 @@ def training(net,
         Epochs:          {args.total_epoch}
         warm up epoch:   {args.warmup_epoch}
         Batch size:      {args.batch_size}
+        Loss metirc      {args.loss}
         Training size:   {len(dataset)}
         checkpoints:     {save_checkpoint}
         Device:          {device.type}
@@ -115,6 +117,8 @@ def training(net,
     teacher.to(device)
     initial_teacher_state = deepcopy(teacher.state_dict())
     set_grad(model=teacher, is_requires_grad=False)
+    loss_fn = Distribution_loss()
+    loss_fn.set_metric(args.loss)
     #begin to train model
     for i in range(1, args.total_epoch+1):
         net.train()
@@ -130,10 +134,10 @@ def training(net,
             imgs = imgs.to(device)
             h,w = imgs.shape[2], imgs.shape[3]
             imgs_src_style = imgs_src_style.to(device = device)
-            probs = torch.log_softmax(net(imgs), dim=1) #沿著channel軸做softmax，看機率
+            probs = torch.softmax(net(imgs), dim=1) #沿著channel軸做softmax，看機率
             truthes = teacher(imgs_src_style)
             truthes = torch.softmax(truthes.detach(), dim=1)
-            loss = torch.sum(-truthes * probs) / (h*w)
+            loss = loss_fn(probs, truthes)
             epoch_loss += loss.item()
             optimizer.zero_grad()
             loss.backward()
@@ -157,35 +161,25 @@ def training(net,
             
     return
 
-def restore_param(model, model_state, prob):
-    for nm, module in model.named_modules():
-        for name_p, param in module.named_parameters():
-            if name_p in ['weight', 'bias']:
-                mask = (torch.rand(param.shape)<prob).float().cuda() 
-                with torch.no_grad():
-                    param.data = model_state[f"{nm}.{name_p}"] * mask + param * (1.-mask)
-    return model
-
-def set_grad(model, is_requires_grad:bool):
-    for p in model.parameters():
-        p.requires_grad = is_requires_grad
-    
-    return model
-
 class Distribution_loss(torch.nn.Module):
+    """p is target probability distribution and q is predict probability distribution"""
     def __init__(self):
         super(Distribution_loss, self).__init__()
         self.metric = self.set_metric()
 
     def kl_divergence(self,p,q):
         """p and q are both a probability distribution"""
-        return torch.sum(p*torch.log(p) - p*torch.log(q))
+        kl = p*torch.log(p) - p*torch.log(q)
+        return torch.sum(kl) / (kl.shape[0]*kl.shape[-1]*kl.shape[-2])
 
     def cross_entropy(self,p,q):
         """p and q are both a probability distribution"""
-        return torch.sum(-p * torch.log(q))
+        ce = -p * torch.log(q)
+        return torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])
     
     def forward(self,p,q):
+        assert p.dim() == 4, f"dimension of target distribution has to be 4, but get {p.dim()}"
+        assert p.dim() == q.dim(), f"dimension dismatch between p and q"
         if self.metric == 'kl_divergence':
             return self.kl_divergence(p,q)
         elif self.metric == "cross_entropy":

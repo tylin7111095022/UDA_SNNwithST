@@ -94,6 +94,21 @@ def cosine_decay_with_warmup(current_iter:int, total_iter:int, warmup_iter:int, 
         lr = slope * current_iter
     return lr
 
+def restore_param(model, model_state, prob):
+    for nm, module in model.named_modules():
+        for name_p, param in module.named_parameters():
+            if name_p in ['weight', 'bias']:
+                mask = (torch.rand(param.shape)<prob).float().cuda() 
+                with torch.no_grad():
+                    param.data = model_state[f"{nm}.{name_p}"] * mask + param * (1.-mask)
+    return model
+
+def set_grad(model, is_requires_grad:bool):
+    for p in model.parameters():
+        p.requires_grad = is_requires_grad
+    
+    return model
+
 if __name__ == "__main__":
     # main()
     lrs = []
