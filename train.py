@@ -10,14 +10,14 @@ warnings.filterwarnings("ignore")
 
 #custom module
 from metric import iou, compute_mIoU
-from models import UNet, InstanceNormalization_UNet
+from models import get_models
 from dataset import STDataset
 from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train_8' #儲存模型的權重檔所在路徑
-load_path = r'weights\in1_out2_inputpixel1\bestmodel.pth'
+dir_checkpoint = r'log\train_10' #儲存模型的權重檔所在路徑
+load_path = r'weights\IN_in1_out2_inputpixel1\bestmodel.pth'
 # if not os.path.exists(dir_checkpoint):
 os.makedirs(dir_checkpoint,exist_ok=False)
 
@@ -25,14 +25,15 @@ def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
     parser.add_argument('--image_channel','-i',type=int, default=1,dest='in_channel',help="channels of input images")
     parser.add_argument('--total_epoch','-e',type=int,default=50,metavar='E',help='times of training model')
-    parser.add_argument('--warmup_epoch',type=int,default=0,metavar='E',help='warm up the student model')
+    parser.add_argument('--warmup_epoch',type=int,default=0,help='warm up the student model')
     parser.add_argument('--batch','-b',type=int,dest='batch_size',default=1, help='Batch size')
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-    parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
+    parser.add_argument('--init_lr','-r',type = float, default=1e-5,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
     parser.add_argument("--momentum", "-m", type=float, default=0.9999, help="momentum parameter for updating teacher model.")
     parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
     parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy]')
+    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
 
     return parser.parse_args()
 
@@ -56,8 +57,8 @@ def main():
     logger.addHandler(ch)
     logger.addHandler(fh)
     ###################################################
-    student = UNet(n_channels=args.in_channel,n_classes = args.classes)
-    teacher = UNet(n_channels=args.in_channel,n_classes = args.classes)
+    student = get_models(model_name=args.model,args=args)
+    teacher = get_models(model_name=args.model,args=args)
     student.load_state_dict(torch.load(load_path))
     teacher.load_state_dict(torch.load(load_path))
     logging.info(student)
@@ -105,6 +106,7 @@ def training(net,
     device = torch.device( args.device if torch.cuda.is_available() else 'cpu')
     #Initial logging
     logging.info(f'''Starting training:
+        model:           {args.model}
         Epochs:          {args.total_epoch}
         warm up epoch:   {args.warmup_epoch}
         Batch size:      {args.batch_size}
@@ -169,12 +171,16 @@ class Distribution_loss(torch.nn.Module):
 
     def kl_divergence(self,p,q):
         """p and q are both a probability distribution"""
-        kl = p*torch.log(p) - p*torch.log(q)
+        kl = (p*torch.log(p)) - (p*torch.log(q))
+        # print(f"p*torch.log(p) is {torch.sum(p*torch.log(p))}")
+        # print(f"p*torch.log(q) is {torch.sum(p*torch.log(q))}")
+        print(f"kl divergence: {torch.sum(kl)}")
         return torch.sum(kl) / (kl.shape[0]*kl.shape[-1]*kl.shape[-2])
 
     def cross_entropy(self,p,q):
-        """p and q are both a probability distribution"""
+        """p and q are both a probability distribution""" 
         ce = -p * torch.log(q)
+        print(f"mean ce: {torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])}")
         return torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])
     
     def forward(self,p,q):

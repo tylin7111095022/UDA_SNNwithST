@@ -12,7 +12,7 @@ import threading
 #online
 from models.other_network import R2U_Net,NestedUNet
 #custom
-from models.unet_model import UNet
+from models import get_models
 from dataset import RGBDataset, GrayDataset
 from metric import iou,compute_mIoU
 from utils import Plotter
@@ -22,9 +22,12 @@ test_truth_dir = r"data\changgung_val\masks"
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
-    parser.add_argument('--weight', '-w', default=r'log\train_8\student_3.pth', metavar='FILE',
-                        help='Specify the file in which the model is stored')
-    parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_0_1.png', help='the path of img')
+    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
+    parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
+
+    parser.add_argument('--weight', '-w', default=r'weights\IN_in1_out2_inputpixel1\bestmodel.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_17_1.png', help='the path of img')
     parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
     
     return parser.parse_args()
@@ -75,7 +78,7 @@ def evaluate_imgs(net,
 if __name__ == '__main__':
     args = get_args()
     testset = GrayDataset(img_dir = test_img_dir, mask_dir = test_truth_dir)
-    net = UNet(n_channels =1,n_classes = 2)
+    net = get_models(model_name=args.model,args=args)
 
     print(f'Loading model {args.weight}')
     net.load_state_dict(torch.load(args.weight, map_location="cpu",))
