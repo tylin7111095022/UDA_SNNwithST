@@ -9,8 +9,6 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 import threading
 
-#online
-from models.other_network import R2U_Net,NestedUNet
 #custom
 from models import get_models
 from dataset import RGBDataset, GrayDataset
@@ -22,11 +20,11 @@ test_truth_dir = r"data\changgung_val\masks"
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
-    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--model', type=str,default='bn_unet',help='models, option: bn_unet, in_unet')
     parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
 
-    parser.add_argument('--weight', '-w', default=r'weights\IN_in1_out2_inputpixel1\bestmodel.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--weight', '-w', default=r'log\train_7\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
     parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_17_1.png', help='the path of img')
     parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
     

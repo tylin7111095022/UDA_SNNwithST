@@ -113,7 +113,7 @@ if __name__ == "__main__":
     # main()
     lrs = []
     for i in range(1, 51):
-        lr = cosine_decay_with_warmup(i, 50,10, 1e-3)
+        lr = cosine_decay_with_warmup(i, 50,0, 1e-1)
         lrs.append(lr)
 
     plt.plot(np.arange(1,51), lrs)
