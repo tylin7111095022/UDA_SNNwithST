@@ -15,21 +15,20 @@ from dataset import RGBDataset, GrayDataset
 from metric import iou,compute_mIoU
 from utils import Plotter
 
-test_img_dir = r"data\changgung_val\images"
-test_truth_dir = r"data\changgung_val\masks"
+test_img_dir = r"data\chang_val_1\images"
+test_truth_dir = r"data\chang_val_1\masks"
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
-    parser.add_argument('--model', type=str,default='bn_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
     parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
 
-    parser.add_argument('--weight', '-w', default=r'log\train_7\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
-    parser.add_argument('--imgpath', '-img',type=str,default=r'A225314_01-01_040822144724_17_1.png', help='the path of img')
+    parser.add_argument('--weight', '-w', default=r'log\train15_byol_in\student_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--imgpath', '-img',type=str,default=r'', help='the path of img')
     parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
     
     return parser.parse_args()
-
 
 def predict_mask(net,imgpath:str):
     plotter = Plotter()
@@ -76,7 +75,10 @@ def evaluate_imgs(net,
 if __name__ == '__main__':
     args = get_args()
     testset = GrayDataset(img_dir = test_img_dir, mask_dir = test_truth_dir)
-    net = get_models(model_name=args.model,args=args)
+    if os.path.basename(args.weight).split("_")[0] == "student":
+        net = get_models(model_name=args.model,is_proj=True, is_cls=True,args=args)
+    else:
+        net = get_models(model_name=args.model,is_proj=False, is_cls=True,args=args)
 
     print(f'Loading model {args.weight}')
     net.load_state_dict(torch.load(args.weight, map_location="cpu",))

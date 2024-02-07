@@ -16,24 +16,26 @@ from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train_10' #儲存模型的權重檔所在路徑
-load_path = r'weights\in1_out2_inputpixel1\bestmodel.pth'
+dir_checkpoint = r'log\train15_byol_in' #儲存模型的權重檔所在路徑
+load_path = r'weights\in\data10000\bestmodel.pth'
 # if not os.path.exists(dir_checkpoint):
 os.makedirs(dir_checkpoint,exist_ok=False)
 
 def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
     parser.add_argument('--image_channel','-i',type=int, default=1,dest='in_channel',help="channels of input images")
+    # parser.add_argument('--is_proj', action="store_true",default=False, help='model projector')
+    # parser.add_argument('--is_cls', action="store_true",default=True, help='model classifier')
     parser.add_argument('--total_epoch','-e',type=int,default=50,metavar='E',help='times of training model')
     parser.add_argument('--warmup_epoch',type=int,default=0,help='warm up the student model')
     parser.add_argument('--batch','-b',type=int,dest='batch_size',default=1, help='Batch size')
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
     parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
-    parser.add_argument("--momentum", "-m", type=float, default=0.9996, help="momentum parameter for updating teacher model.")
+    parser.add_argument("--momentum", "-m", type=float, default=0.999, help="momentum parameter for updating teacher model.")
     parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
     parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy]')
-    parser.add_argument('--model', type=str,default='bn_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
 
     return parser.parse_args()
 
@@ -57,12 +59,25 @@ def main():
     logger.addHandler(ch)
     logger.addHandler(fh)
     ###################################################
-    student = get_models(model_name=args.model,args=args)
-    teacher = get_models(model_name=args.model,args=args)
-    student.load_state_dict(torch.load(load_path))
-    teacher.load_state_dict(torch.load(load_path))
-    logging.info(student)
+    student = get_models(model_name=args.model,is_proj=True, is_cls=True,args=args)
+    teacher = get_models(model_name=args.model,is_proj=False, is_cls=True,args=args)
 
+    pretrained_model_param_dict = torch.load(load_path)
+    student_param_dict = student.state_dict()
+    teacher_param_dict = teacher.state_dict()
+    # 1. filter out unnecessary keys
+    pretrained_dict_s = {k: v for k, v in pretrained_model_param_dict.items() if k in student_param_dict}
+    pretrained_dict_t = {k: v for k, v in pretrained_model_param_dict.items() if k in teacher_param_dict}
+    # 2. overwrite entries in the existing state dict
+    student_param_dict.update(pretrained_dict_s)
+    teacher_param_dict.update(pretrained_dict_t)
+    # 3. load the new state dict
+    student.load_state_dict(student_param_dict)
+    teacher.load_state_dict(teacher_param_dict)
+    
+    logging.info(student)
+    logging.info("="*20)
+    logging.info(teacher)
     optimizer = torch.optim.Adam(student.parameters(),lr = args.init_lr,betas=(0.9,0.999))
     ##紀錄訓練的一些參數配置
     logging.info(f'''
@@ -70,6 +85,7 @@ def main():
     student and teacher model are both initialized by zong weights.
     random restore the parameters of teacher model to initial state at every \'epoch\'. 
     update teacher model(EMA) at every \'epoch\' too. 
+    add BYOL training method
     
     dir_img: {dir_img}
     dir_truth: {dir_truth}
@@ -144,10 +160,18 @@ def training(net,
             loss.backward()
             optimizer.step()
         # update teacher model
+        # with torch.no_grad():
+        #     m = args.momentum  # momentum parameter
+        #     for param_q, param_k in zip(net.parameters(), teacher.parameters()):
+        #         param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+            
+        # update teacher model and it also apply the situation which  both architectures of student model and teacher model are different
         with torch.no_grad():
             m = args.momentum  # momentum parameter
-            for param_q, param_k in zip(net.parameters(), teacher.parameters()):
-                param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+            student_name_parameters = { param[0]:param[1].data.detach() for param in net.named_parameters()}
+            for param_t in teacher.named_parameters():
+                if param_t[0] in student_name_parameters.keys():
+                    param_t[1].data = param_t[1].data.mul_(m).add_((1-m)*student_name_parameters[param_t[0]])
 
         logging.info(f'Training loss: {epoch_loss:6.4f} at epoch {i}.')
 

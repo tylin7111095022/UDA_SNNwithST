@@ -6,11 +6,13 @@ import torch
 import torch.nn as nn
 
 class InstanceNormalization_UNet(nn.Module):
-    def __init__(self, n_channels, n_classes, bilinear=False):
+    def __init__(self, n_channels, n_classes, bilinear=False, is_proj:bool=False, is_cls:bool=True):
         super(InstanceNormalization_UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
+        self.is_proj = is_proj
+        self.is_cls = is_cls
 
         self.inc = DoubleConv(n_channels, 64)
         self.down1 = Down(64, 128)
@@ -21,7 +23,10 @@ class InstanceNormalization_UNet(nn.Module):
         self.up2 = Up(512, 256, bilinear)
         self.up3 = Up(256, 128, bilinear)
         self.up4 = Up(128, 64, bilinear)
-        self.outc = OutConv(64, n_classes)
+        if is_proj:
+            self.projector = DoubleConv(64, 64)
+        if is_cls:
+            self.outc = OutConv(64, n_classes)
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -32,9 +37,12 @@ class InstanceNormalization_UNet(nn.Module):
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        logits = self.outc(x)
-        return logits
+        f = self.up4(x, x1)
+        if self.is_proj:
+            f = self.projector(f)
+        if self.is_cls:
+            logits = self.outc(f)
+        return logits if self.is_cls else f
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -136,5 +144,7 @@ def cross_entropy_2d(predict, target):
     
 if __name__ == '__main__':
     net = InstanceNormalization_UNet(n_channels=3, n_classes=1)
-    print(net)
+    for param in net.named_parameters():
+        # print(param[0])
+        print(param[1].data)
     
