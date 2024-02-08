@@ -109,6 +109,27 @@ def set_grad(model, is_requires_grad:bool):
     
     return model
 
+def generate_class_mask(pred, classes, device): # in this case, classes always equal to 1
+    # print("pred shape: ", pred.shape)
+    # print("classes shape: ", classes.shape)
+    pred, classes = torch.broadcast_tensors(pred.unsqueeze(0).to(device), classes.unsqueeze(1).unsqueeze(2).to(device)) # pred 鬆開channel軸， classes鬆開h,w軸
+    N = torch.sum(pred.eq(classes),dim=0,keepdim=True)
+    # print("mask shape: ", N.shape)
+    return N # shape should be (1,h,w)
+
+def mix(mask, sourcedata = None,targetdata = None, sourcelabel = None, targetlabel = None):
+    # Mix
+    mix_data = None
+    mix_label = None
+    if not (sourcedata is None or targetdata is None):
+        mix_data = (mask * sourcedata + (1 - mask) * targetdata)
+
+    if not (sourcelabel is None or targetlabel is None):
+        mix_label = (mask * sourcelabel + (1 - mask) * targetlabel)
+    # print("mix_data shape: ", mix_data.shape)
+    # print("mix_label shape: ", mix_label.shape)
+    return mix_data, mix_label
+
 if __name__ == "__main__":
     # main()
     lrs = []

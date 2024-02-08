@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import torch
+from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader,random_split #random_split幫助切割dataset
 from tqdm import tqdm
 from copy import deepcopy
@@ -12,11 +13,11 @@ warnings.filterwarnings("ignore")
 from metric import compute_mIoU
 from models import get_models
 from dataset import STDataset
-from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad
+from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad, generate_class_mask, mix
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train15_byol_in' #儲存模型的權重檔所在路徑
+dir_checkpoint = r'log\train38_byol_in_no_restore' #儲存模型的權重檔所在路徑
 load_path = r'weights\in\data10000\bestmodel.pth'
 # if not os.path.exists(dir_checkpoint):
 os.makedirs(dir_checkpoint,exist_ok=False)
@@ -32,10 +33,11 @@ def get_args():
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
     parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
-    parser.add_argument("--momentum", "-m", type=float, default=0.999, help="momentum parameter for updating teacher model.")
-    parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
+    parser.add_argument("--momentum", "-m", type=float, default=0.9999, help="momentum parameter for updating teacher model.")
+    parser.add_argument('--restore_prob',type = float, default=0.00,help='the probability of restoring model parameter')
     parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy]')
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--classmix', action="store_true",default=False, help='calculate miou')
 
     return parser.parse_args()
 
@@ -83,9 +85,7 @@ def main():
     logging.info(f'''
     =======================================
     student and teacher model are both initialized by zong weights.
-    random restore the parameters of teacher model to initial state at every \'epoch\'. 
     update teacher model(EMA) at every \'epoch\' too. 
-    add BYOL training method
     
     dir_img: {dir_img}
     dir_truth: {dir_truth}
@@ -138,6 +138,7 @@ def training(net,
     loss_fn = Distribution_loss()
     loss_fn.set_metric(args.loss)
     #begin to train model
+    epoch_losses = []
     for i in range(1, args.total_epoch+1):
         net.train()
         teacher.train()
@@ -148,6 +149,7 @@ def training(net,
         adjust_lr(optimizer,lr)
 
         for imgs, imgs_src_style in tqdm(train_loader):
+
             imgs = imgs.to(torch.float32)
             imgs = imgs.to(device)
             h,w = imgs.shape[2], imgs.shape[3]
@@ -155,6 +157,15 @@ def training(net,
             logit_s = net(imgs)
             logit_t = teacher(imgs_src_style)
             loss = loss_fn(logit_t, logit_s)
+            if args.classmix:
+                with torch.no_grad():
+                    teacher_predict = torch.argmax(torch.softmax(logit_t.detach(),dim=1),dim=1)
+                    student_predict = torch.argmax(torch.softmax(logit_s.detach(),dim=1),dim=1)
+                    mask = generate_class_mask(pred=teacher_predict,classes=torch.ones(1),device=device)
+                    mix_img, mix_label = mix(mask,sourcedata=imgs,targetdata=imgs_src_style,sourcelabel=student_predict,targetlabel=teacher_predict)
+                logit_mix = net(mix_img)
+                loss_aux = CrossEntropyLoss()(logit_mix, mix_label.squeeze(1))
+                loss += loss_aux
             epoch_loss += loss.item()
             optimizer.zero_grad()
             loss.backward()
@@ -174,6 +185,7 @@ def training(net,
                     param_t[1].data = param_t[1].data.mul_(m).add_((1-m)*student_name_parameters[param_t[0]])
 
         logging.info(f'Training loss: {epoch_loss:6.4f} at epoch {i}.')
+        epoch_losses.append(epoch_loss)
 
         if (save_checkpoint) :
             torch.save(net.state_dict(), os.path.join(dir_checkpoint,f'student_{i}.pth'))
@@ -183,6 +195,8 @@ def training(net,
         # Stochastic restore
         if True: # teacher model 需要 restore to initial state的條件
             teacher = restore_param(model=teacher,model_state=initial_teacher_state,prob=args.restore_prob)
+    min_loss_at = torch.argmin(torch.tensor(epoch_losses)).item() + 1 
+    logging.info(f'min Training loss at epoch {min_loss_at}.')
             
     return
 

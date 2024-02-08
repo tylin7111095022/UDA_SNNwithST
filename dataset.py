@@ -139,8 +139,7 @@ class GrayDataset(Dataset):
 
     def __len__(self):
         return len(self.img_list)
-
-
+    
 if __name__ == "__main__":
     # ds = STDataset(student_dir = r'data\real_B', teacher_dir= r'data\fake_A')
     ds = GrayDataset(img_dir = r"data\changgung_val\images", mask_dir = r"data\changgung_val\masks")

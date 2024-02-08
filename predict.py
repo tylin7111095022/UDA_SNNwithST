@@ -23,8 +23,7 @@ def get_args():
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
     parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-
-    parser.add_argument('--weight', '-w', default=r'log\train15_byol_in\student_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--weight', '-w', default=r'log\train38_byol_in_no_restore\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
     parser.add_argument('--imgpath', '-img',type=str,default=r'', help='the path of img')
     parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
     
