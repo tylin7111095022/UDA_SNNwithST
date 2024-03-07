@@ -10,14 +10,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 #custom module
-from metric import compute_mIoU
 from models import get_models
 from dataset import STDataset
 from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad, generate_class_mask, mix
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train38_byol_in_no_restore' #儲存模型的權重檔所在路徑
+dir_checkpoint = r'log\train39_in_dice_loss' #儲存模型的權重檔所在路徑
 load_path = r'weights\in\data10000\bestmodel.pth'
 # if not os.path.exists(dir_checkpoint):
 os.makedirs(dir_checkpoint,exist_ok=False)
@@ -25,8 +24,6 @@ os.makedirs(dir_checkpoint,exist_ok=False)
 def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
     parser.add_argument('--image_channel','-i',type=int, default=1,dest='in_channel',help="channels of input images")
-    # parser.add_argument('--is_proj', action="store_true",default=False, help='model projector')
-    # parser.add_argument('--is_cls', action="store_true",default=True, help='model classifier')
     parser.add_argument('--total_epoch','-e',type=int,default=50,metavar='E',help='times of training model')
     parser.add_argument('--warmup_epoch',type=int,default=0,help='warm up the student model')
     parser.add_argument('--batch','-b',type=int,dest='batch_size',default=1, help='Batch size')
@@ -34,9 +31,10 @@ def get_args():
     parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
     parser.add_argument("--momentum", "-m", type=float, default=0.9999, help="momentum parameter for updating teacher model.")
-    parser.add_argument('--restore_prob',type = float, default=0.00,help='the probability of restoring model parameter')
-    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy]')
+    parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
+    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss]')
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--byol_proj', action="store_true",default=False, help='calculate miou')
     parser.add_argument('--classmix', action="store_true",default=False, help='calculate miou')
 
     return parser.parse_args()
@@ -61,7 +59,7 @@ def main():
     logger.addHandler(ch)
     logger.addHandler(fh)
     ###################################################
-    student = get_models(model_name=args.model,is_proj=True, is_cls=True,args=args)
+    student = get_models(model_name=args.model,is_proj=args.byol_proj, is_cls=True,args=args)
     teacher = get_models(model_name=args.model,is_proj=False, is_cls=True,args=args)
 
     pretrained_model_param_dict = torch.load(load_path)
@@ -201,7 +199,7 @@ def training(net,
     return
 
 class Distribution_loss(torch.nn.Module):
-    """p is target probability distribution and q is predict probability distribution"""
+    """p is target distribution and q is predict distribution"""
     def __init__(self):
         super(Distribution_loss, self).__init__()
         self.metric = self.set_metric()
@@ -221,6 +219,16 @@ class Distribution_loss(torch.nn.Module):
         # print(f"mean ce: {torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])}")
         return torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])
     
+    def dice_loss(self,p,q):
+        smooth = 1e-8
+        prob_p = torch.softmax(p,dim=1)
+        prob_q = torch.softmax(q,dim=1)
+
+        inter = torch.sum(prob_p*prob_q) + smooth
+        union = torch.sum(prob_p) + torch.sum(prob_q) + smooth
+        loss = 1 - ((2*inter) / union)
+        return  loss / p.size(0) # loss除以batch size
+
     def forward(self,p,q):
         assert p.dim() == 4, f"dimension of target distribution has to be 4, but get {p.dim()}"
         assert p.dim() == q.dim(), f"dimension dismatch between p and q"
@@ -228,11 +236,13 @@ class Distribution_loss(torch.nn.Module):
             return self.kl_divergence(p,q)
         elif self.metric == "cross_entropy":
             return self.cross_entropy(p,q)
+        elif self.metric == "dice_loss":
+            return self.dice_loss(p,q)
         else:
             raise NotImplementedError("the loss metric has not implemented")
         
     def set_metric(self, metric:str="cross_entropy"):
-        if metric in ["kl_divergence", "cross_entropy"]:
+        if metric in ["kl_divergence", "cross_entropy", "dice_loss"]:
             self.metric = metric
         else:
             raise NotImplementedError(f"the loss metric has not implemented. metric name must be in kl_divergence or cross_entropy")

@@ -12,7 +12,7 @@ import threading
 #custom
 from models import get_models
 from dataset import RGBDataset, GrayDataset
-from metric import iou,compute_mIoU
+from metric import iou,compute_mIoU, dice_score
 from utils import Plotter
 
 test_img_dir = r"data\chang_val_1\images"
@@ -23,9 +23,9 @@ def get_args():
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
     parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-    parser.add_argument('--weight', '-w', default=r'log\train38_byol_in_no_restore\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
-    parser.add_argument('--imgpath', '-img',type=str,default=r'', help='the path of img')
-    parser.add_argument('--miou', action="store_true",default=True, help='calculate miou')
+    parser.add_argument('--weight', '-w', default=r'', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--imgpath', '-img',type=str,default=r'data\chang_val_1\images\A185011_02-01_290118093807_0.png', help='the path of img')
+    parser.add_argument('--eval', action="store_true",default=False, help='calculate miou and dice score')
     
     return parser.parse_args()
 
@@ -50,7 +50,12 @@ def evaluate_imgs(net,
     # net.eval() #miou 計算不用 eval mode 因為 running mean and running std 誤差可能在訓練過程紀錄的時候過大
     total_iou = 0
     count = 0
-    miou_list = []
+    evaluation_dict = {}
+    if not evaluation_dict.get("miou"):
+        evaluation_dict["miou"] = []
+    if not evaluation_dict.get("dice"):
+        evaluation_dict["dice"] = []
+
     for i,(img, truth) in enumerate(tqdm(testdataset)):
         img = img.unsqueeze(0)#加入批次軸
         img = img.to(dtype=torch.float32)
@@ -62,14 +67,17 @@ def evaluate_imgs(net,
             #print('shape of mask_pred: ',mask_pred.shape)
             # mask = mask_pred.squeeze(0).detach()#(1,h ,w)
             # mask *= 255 #把圖片像素轉回255
-            #compute the mIOU
+            #compute the mIOU and dice score
             miou = compute_mIoU(mask_pred.numpy(), truth.numpy())
+            f1 = dice_score(mask_pred.detach(), truth.detach())
             # print(miou)
-            miou_list.append(miou)
-            # print('Mean Intersection Over Union: {:6.4f}'.format(miou))
+            evaluation_dict["miou"].append(miou)
+            evaluation_dict["dice"].append(f1)
 
-    # return total_iou / count #回傳miou
-    return sum(miou_list) / len(miou_list)
+    for k in evaluation_dict:
+        evaluation_dict[k] = sum(evaluation_dict[k]) / len(evaluation_dict[k])
+
+    return evaluation_dict
 
 if __name__ == '__main__':
     args = get_args()
@@ -87,6 +95,6 @@ if __name__ == '__main__':
         predict_mask(net=net,imgpath=args.imgpath)
 
     # evaluate images
-    if args.miou:
-        miou = evaluate_imgs(net=net,testdataset=testset)
-        print(f'miou = {miou:6.4f}')
+    if args.eval:
+        performance = evaluate_imgs(net=net,testdataset=testset)
+        print(f'{performance}')
