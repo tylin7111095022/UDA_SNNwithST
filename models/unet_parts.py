@@ -53,12 +53,21 @@ class Up(nn.Module):
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
-        # input is CHW
+        # input is BCHW
         diffY = torch.tensor([x2.size()[2] - x1.size()[2]])
         diffX = torch.tensor([x2.size()[3] - x1.size()[3]])
+        # print(f"diffY: {diffY}")
+        # print(f"diffX: {diffX}")
 
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
+        # padding x1
+        # x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+        #                 diffY // 2, diffY - diffY // 2])
+        
+        # center crop to x2
+        x2_orig_y, x2_orig_x = x2.shape[2], x2.shape[3]
+        x2 = x2[:,:, (diffY//2):x2_orig_y-(diffY - diffY // 2), (diffX//2):x2_orig_x-(diffX - diffX // 2)]
+        # print(f"x1 {x1.shape}")
+        # print(f"x2 {x2.shape}")
         # if you have padding issues, see
         # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
         # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd

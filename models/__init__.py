@@ -4,17 +4,13 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-from .unet_model import UNet
 from .IN_Unet import InstanceNormalization_UNet
 import torch
 
-
-def get_models(model_name:str, is_proj:bool, is_cls:bool, args):
+def get_models(model_name:str, is_cls:bool, args):
     """option: in_unet, bn_unet"""
     if model_name == "in_unet":
-        model = InstanceNormalization_UNet(n_channels=args.in_channel,n_classes=args.classes,is_proj=is_proj,is_cls=is_cls)
-    elif model_name == "bn_unet":
-        model = UNet(n_channels=args.in_channel,n_classes=args.classes,is_proj=is_proj,is_cls=is_cls)
+        model = InstanceNormalization_UNet(n_channels=args.in_channel,n_classes=args.classes,is_normalize=args.is_normalize,is_cls=is_cls,pad_mode=args.pad_mode,instance_branch=args.instanceloss)
     else:
         raise NotImplementedError(f"{model_name} has not implemented")
 
@@ -22,7 +18,7 @@ def get_models(model_name:str, is_proj:bool, is_cls:bool, args):
 
 if __name__ == '__main__':
 
-    student = InstanceNormalization_UNet(n_channels=1, n_classes=2,is_proj=True, is_cls=True)
+    student = InstanceNormalization_UNet(n_channels=1, n_classes=2, is_cls=True)
     teacher = InstanceNormalization_UNet(n_channels=1, n_classes=2,is_proj=False, is_cls=True)
     load_path = r'weight\in\data10000\bestmodel.pth'
     student_name = { param[0]:param[1].data.detach() for param in student.named_parameters()}

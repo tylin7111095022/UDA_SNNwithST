@@ -3,7 +3,7 @@ import logging
 import os
 import torch
 from torch.nn import CrossEntropyLoss
-from torch.utils.data import DataLoader,random_split #random_split幫助切割dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from copy import deepcopy
 import warnings
@@ -16,10 +16,8 @@ from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad, 
 
 dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
 dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\train39_in_dice_loss' #儲存模型的權重檔所在路徑
-load_path = r'weights\in\data10000\bestmodel.pth'
-# if not os.path.exists(dir_checkpoint):
-os.makedirs(dir_checkpoint,exist_ok=False)
+dir_checkpoint = r'log\In_DICE_m0999' #儲存模型的權重檔所在路徑
+load_path = r'D:\tsungyu\AdaIN_domain_adaptation\weights\in\data10000_100epoch\bestmodel.pth'
 
 def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
@@ -30,11 +28,14 @@ def get_args():
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
     parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
-    parser.add_argument("--momentum", "-m", type=float, default=0.9999, help="momentum parameter for updating teacher model.")
-    parser.add_argument('--restore_prob',type = float, default=0.01,help='the probability of restoring model parameter')
-    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss]')
+    parser.add_argument("--momentum", "-m", type=float, default=0.999, help="momentum parameter for updating teacher model.")
+    # parser.add_argument('--restore_prob',type = float, default=0.00,help='the probability of restoring model parameter')
+    parser.add_argument('--loss', type=str,default='dice_loss',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss]')
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
-    parser.add_argument('--byol_proj', action="store_true",default=False, help='calculate miou')
+    parser.add_argument('--pad_mode', action="store_true",default=True, help='unet used crop or pad at skip connection') # pretrained model , pad mode == True
+    parser.add_argument('--normalize', action="store_true",dest="is_normalize",default=True, help='model normalize layer exist or not')
+    parser.add_argument('--fix_encoder', action="store_true",default=False, help='fix encoder')
+    parser.add_argument('--instanceloss', action="store_true",default=False, help='using instance seg loss during training')
     parser.add_argument('--classmix', action="store_true",default=False, help='calculate miou')
 
     return parser.parse_args()
@@ -42,6 +43,8 @@ def get_args():
 def main():
     args = get_args()
     trainingDataset = STDataset(student_dir = dir_img, teacher_dir= dir_truth)
+
+    os.makedirs(dir_checkpoint,exist_ok=False)
 
     #設置 log
     # ref: https://shengyu7697.github.io/python-logging/
@@ -59,8 +62,8 @@ def main():
     logger.addHandler(ch)
     logger.addHandler(fh)
     ###################################################
-    student = get_models(model_name=args.model,is_proj=args.byol_proj, is_cls=True,args=args)
-    teacher = get_models(model_name=args.model,is_proj=False, is_cls=True,args=args)
+    student = get_models(model_name=args.model, is_cls=True,args=args)
+    teacher = get_models(model_name=args.model, is_cls=True,args=args)
 
     pretrained_model_param_dict = torch.load(load_path)
     student_param_dict = student.state_dict()
@@ -115,7 +118,7 @@ def training(net,
              args,
              save_checkpoint: bool = True):
 
-    arg_loader = dict(batch_size = args.batch_size, num_workers = 0)
+    arg_loader = dict(batch_size = args.batch_size, num_workers = 4)
     train_loader = DataLoader(dataset,shuffle = True, **arg_loader)
     device = torch.device( args.device if torch.cuda.is_available() else 'cpu')
     #Initial logging
@@ -191,8 +194,8 @@ def training(net,
             logging.info(f'Model saved at epoch {i}.')
         
         # Stochastic restore
-        if True: # teacher model 需要 restore to initial state的條件
-            teacher = restore_param(model=teacher,model_state=initial_teacher_state,prob=args.restore_prob)
+        # if True: # teacher model 需要 restore to initial state的條件
+        #     teacher = restore_param(model=teacher,model_state=initial_teacher_state,prob=args.restore_prob)
     min_loss_at = torch.argmin(torch.tensor(epoch_losses)).item() + 1 
     logging.info(f'min Training loss at epoch {min_loss_at}.')
             
