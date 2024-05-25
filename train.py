@@ -11,13 +11,14 @@ warnings.filterwarnings("ignore")
 
 #custom module
 from models import get_models
+from models.losses import Distribution_loss
 from dataset import STDataset
-from utils import adjust_lr, cosine_decay_with_warmup, restore_param, set_grad, generate_class_mask, mix
+from utils import adjust_lr, cosine_decay_with_warmup, set_grad, generate_class_mask, mix
 
-dir_img = r'data\real_B' #訓練集的圖片所在路徑 長庚圖片
-dir_truth = r'data\fake_A' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\In_DICE_m0999' #儲存模型的權重檔所在路徑
-load_path = r'D:\tsungyu\AdaIN_domain_adaptation\weights\in\data10000_100epoch\bestmodel.pth'
+dir_img = r'D:\tsungyu\chromosome_data\cyclegan_data\real_chang' #訓練集的圖片所在路徑 長庚圖片
+dir_truth = r'D:\tsungyu\chromosome_data\cyclegan_data\fake_zong' #訓練集的真實label所在路徑 長庚圖片榮總風格
+dir_checkpoint = r'log\In_CE_m09996\teacher_50.pth' #儲存模型的權重檔所在路徑
+load_path = r'log\In_CE_m099\teacher_17.pth'
 
 def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
@@ -26,12 +27,11 @@ def get_args():
     parser.add_argument('--warmup_epoch',type=int,default=0,help='warm up the student model')
     parser.add_argument('--batch','-b',type=int,dest='batch_size',default=1, help='Batch size')
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-    parser.add_argument('--init_lr','-r',type = float, default=2e-2,help='initial learning rate of model')
+    parser.add_argument('--init_lr','-r',type = float, default=0.02,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
     parser.add_argument("--momentum", "-m", type=float, default=0.999, help="momentum parameter for updating teacher model.")
-    # parser.add_argument('--restore_prob',type = float, default=0.00,help='the probability of restoring model parameter')
-    parser.add_argument('--loss', type=str,default='dice_loss',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss]')
-    parser.add_argument('--model', type=str,default='in_unet',help='models, option: bn_unet, in_unet')
+    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss, mae, asl]')
+    parser.add_argument('--model', type=str,default='in_unet',help='models, option: simclr, in_unet')
     parser.add_argument('--pad_mode', action="store_true",default=True, help='unet used crop or pad at skip connection') # pretrained model , pad mode == True
     parser.add_argument('--normalize', action="store_true",dest="is_normalize",default=True, help='model normalize layer exist or not')
     parser.add_argument('--fix_encoder', action="store_true",default=False, help='fix encoder')
@@ -134,7 +134,6 @@ def training(net,
     ''')
     net.to(device)
     teacher.to(device)
-    initial_teacher_state = deepcopy(teacher.state_dict())
     set_grad(model=teacher, is_requires_grad=False)
     loss_fn = Distribution_loss()
     loss_fn.set_metric(args.loss)
@@ -151,13 +150,26 @@ def training(net,
 
         for imgs, imgs_src_style in tqdm(train_loader):
 
-            imgs = imgs.to(torch.float32)
-            imgs = imgs.to(device)
-            h,w = imgs.shape[2], imgs.shape[3]
-            imgs_src_style = imgs_src_style.to(device = device)
+            imgs = imgs.to(device=device,dtype=torch.float32)
+            # h,w = imgs.shape[2], imgs.shape[3]
+            imgs_src_style = imgs_src_style.to(device=device,dtype=torch.float32)
             logit_s = net(imgs)
             logit_t = teacher(imgs_src_style)
-            loss = loss_fn(logit_t, logit_s)
+
+            hard_label = torch.zeros_like(logit_t)
+            index = torch.argmax(torch.softmax(logit_t.detach(),dim=1),dim=1,keepdim=True)
+            hard_label.scatter_(1, index, 1)
+
+            # print(hard_label.shape)
+            # print(hard_label[:,0,1,1])
+            # print(hard_label[:,1,1,1])
+
+            # entmap = prob2entropy(torch.softmax(logit_t.detach(),dim=1)) #上下限0~1
+            # entmap = torch.where(torch.isnan(entmap),torch.full_like(entmap,0),entmap) # NaN 補 0 # entropy高 權重越高
+            # # print(entmap.min(),entmap.max())
+            # weight = torch.ones_like(entmap) - entmap # entropy低 權重越高
+
+            loss = loss_fn(hard_label, logit_s)
             if args.classmix:
                 with torch.no_grad():
                     teacher_predict = torch.argmax(torch.softmax(logit_t.detach(),dim=1),dim=1)
@@ -171,12 +183,7 @@ def training(net,
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        # update teacher model
-        # with torch.no_grad():
-        #     m = args.momentum  # momentum parameter
-        #     for param_q, param_k in zip(net.parameters(), teacher.parameters()):
-        #         param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
-            
+        
         # update teacher model and it also apply the situation which  both architectures of student model and teacher model are different
         with torch.no_grad():
             m = args.momentum  # momentum parameter
@@ -193,62 +200,10 @@ def training(net,
             torch.save(teacher.state_dict(), os.path.join(dir_checkpoint,f'teacher_{i}.pth'))
             logging.info(f'Model saved at epoch {i}.')
         
-        # Stochastic restore
-        # if True: # teacher model 需要 restore to initial state的條件
-        #     teacher = restore_param(model=teacher,model_state=initial_teacher_state,prob=args.restore_prob)
     min_loss_at = torch.argmin(torch.tensor(epoch_losses)).item() + 1 
     logging.info(f'min Training loss at epoch {min_loss_at}.')
             
     return
-
-class Distribution_loss(torch.nn.Module):
-    """p is target distribution and q is predict distribution"""
-    def __init__(self):
-        super(Distribution_loss, self).__init__()
-        self.metric = self.set_metric()
-
-    def kl_divergence(self,p,q):
-        """p and q are both a logit(before softmax function)"""
-        prob_p = torch.softmax(p,dim=1)
-        kl = (prob_p * torch.log_softmax(p,dim=1)) - (prob_p * torch.log_softmax(q,dim=1))
-        # print(f"p*torch.log(p) is {torch.sum(p*torch.log(p))}")
-        # print(f"p*torch.log(q) is {torch.sum(p*torch.log(q))}")
-        # print(f"mean kl divergence: {torch.sum(kl) / (kl.shape[0]*kl.shape[-1]*kl.shape[-2])}")
-        return torch.sum(kl) / (kl.shape[0]*kl.shape[-1]*kl.shape[-2])
-
-    def cross_entropy(self,p,q):
-        """p and q are both a logit(before softmax function)""" 
-        ce = -torch.softmax(p, dim=1) * torch.log_softmax(q, dim=1)
-        # print(f"mean ce: {torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])}")
-        return torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])
-    
-    def dice_loss(self,p,q):
-        smooth = 1e-8
-        prob_p = torch.softmax(p,dim=1)
-        prob_q = torch.softmax(q,dim=1)
-
-        inter = torch.sum(prob_p*prob_q) + smooth
-        union = torch.sum(prob_p) + torch.sum(prob_q) + smooth
-        loss = 1 - ((2*inter) / union)
-        return  loss / p.size(0) # loss除以batch size
-
-    def forward(self,p,q):
-        assert p.dim() == 4, f"dimension of target distribution has to be 4, but get {p.dim()}"
-        assert p.dim() == q.dim(), f"dimension dismatch between p and q"
-        if self.metric == 'kl_divergence':
-            return self.kl_divergence(p,q)
-        elif self.metric == "cross_entropy":
-            return self.cross_entropy(p,q)
-        elif self.metric == "dice_loss":
-            return self.dice_loss(p,q)
-        else:
-            raise NotImplementedError("the loss metric has not implemented")
-        
-    def set_metric(self, metric:str="cross_entropy"):
-        if metric in ["kl_divergence", "cross_entropy", "dice_loss"]:
-            self.metric = metric
-        else:
-            raise NotImplementedError(f"the loss metric has not implemented. metric name must be in kl_divergence or cross_entropy")
 
 if __name__ == '__main__':
     main()

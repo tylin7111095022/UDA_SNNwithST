@@ -12,8 +12,8 @@ import threading
 #custom
 from models import get_models
 from dataset import  GrayDataset
-from metric import compute_mIoU, dice_score
-from utils import Plotter
+from metric import compute_mIoU, dice_score, iou
+from utils import Plotter, GradCam
 
 test_img_dir = r"D:\tsungyu\chromosome_data\chang\changValSum\images"
 test_truth_dir = r"D:\tsungyu\chromosome_data\chang\changValSum\masks"
@@ -30,7 +30,8 @@ def get_args():
     parser.add_argument('--instanceloss', action="store_true",default=False, help='using instance seg loss during training')
     parser.add_argument('--in_channel','-i',type=int, default=1,help="channels of input images")
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
-    parser.add_argument('--weight', '-w', default=r'log\In_DICE_m09996\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--weight', '-w', default=r'log\In_CE_m09999\teacher_50.pth', metavar='FILE',help='Specify the file in which the model is stored')
+    parser.add_argument('--imgdir', type=str,default=r'', help='the path of directory which imgs saved for predicting')
     parser.add_argument('--imgpath', '-img',type=str,default=r'', help='the path of img')
     parser.add_argument('--eval', action="store_true",default=True, help='calculate miou and dice score')
     
@@ -60,6 +61,8 @@ def evaluate_imgs(net,
         evaluation_dict["miou"] = []
     if not evaluation_dict.get("dice"):
         evaluation_dict["dice"] = []
+    if not evaluation_dict.get("iou"):
+        evaluation_dict["iou"] = []
 
     for i,(img, truth) in enumerate(tqdm(testdataset)):
         img = img.unsqueeze(0)#加入批次軸
@@ -73,10 +76,12 @@ def evaluate_imgs(net,
 
             #compute the mIOU and dice score
             miou = compute_mIoU(mask_pred.numpy(), truth.numpy())
-            f1 = dice_score(mask_pred.detach(), truth.detach())
+            f1 = dice_score(mask_pred.detach().squeeze(1), truth.detach().squeeze(1))
+            chromosome_iou = iou(mask_pred.squeeze(1), truth.squeeze(1))
             # print(miou)
             evaluation_dict["miou"].append(miou)
             evaluation_dict["dice"].append(f1)
+            evaluation_dict["iou"].append(chromosome_iou)
 
     for k in evaluation_dict:
         evaluation_dict[k] = sum(evaluation_dict[k]) / len(evaluation_dict[k])
@@ -91,8 +96,13 @@ if __name__ == '__main__':
     print(f'Loading model {args.weight}')
     net.load_state_dict(torch.load(args.weight, map_location="cpu",),strict=False)
     print('Model loaded!')
+    if args.imgdir:
+        imgs = os.listdir(args.imgdir)
+        imgs = [os.path.join(args.imgdir,i)for i in imgs]
+        for i in imgs:
+            predict_mask(net=net,imgpath=i)
     # predict one images
-    if args.imgpath:
+    elif args.imgpath:
         predict_mask(net=net,imgpath=args.imgpath)
 
     # evaluate images

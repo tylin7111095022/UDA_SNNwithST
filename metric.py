@@ -42,11 +42,12 @@ def compute_mIoU(pred, label):
 
 def dice_score(pred, label):
     assert len(pred.shape) == len(label.shape), f"dim dismatch, pred shape {len(pred.shape)} is not equal label shape {len(label.shape)}."
-    # assert len(pred.shape) == 4, "dim must be 4 , (BCHW)"
-    tp = torch.sum(pred*label)
-    fp_and_fn = torch.sum(torch.logical_or(pred, label))
-    dice = (2*tp) / (2*tp + fp_and_fn)
-    return dice.item()
+    assert len(pred.shape) == 3, "dim must be 3 , (BHW)"
+    foreground_iou = iou(pred, label)
+    # tp = torch.sum(pred*label)
+    # fp_and_fn = torch.sum(torch.logical_or(pred, label))
+    dice = (foreground_iou*2) / (foreground_iou+1)
+    return dice
 
 if __name__ == "__main__":
     pred = torch.tensor([[[0,0,1],
