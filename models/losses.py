@@ -33,7 +33,7 @@ class Distribution_loss(torch.nn.Module):
         return torch.sum(ce) / (ce.shape[0]*ce.shape[-1]*ce.shape[-2])
     
     def asl(self,p,q,weight=None):
-        "p is label, q is prob"
+        "p is label, q is logit"
         if weight is not None:
             if len(weight.shape) == 4:
                 weight = weight.squeeze(1) 

@@ -13,12 +13,12 @@ warnings.filterwarnings("ignore")
 from models import get_models
 from models.losses import Distribution_loss
 from dataset import STDataset
-from utils import adjust_lr, cosine_decay_with_warmup, set_grad, generate_class_mask, mix
+from utils import adjust_lr, cosine_decay_with_warmup, set_grad, generate_class_mask, mix, prob2entropy
 
-dir_img = r'D:\tsungyu\chromosome_data\cyclegan_data\real_chang' #訓練集的圖片所在路徑 長庚圖片
-dir_truth = r'D:\tsungyu\chromosome_data\cyclegan_data\fake_zong' #訓練集的真實label所在路徑 長庚圖片榮總風格
-dir_checkpoint = r'log\In_CE_m09996\teacher_50.pth' #儲存模型的權重檔所在路徑
-load_path = r'log\In_CE_m099\teacher_17.pth'
+dir_img = r'D:\tsungyu\chromosome_data\cyclegan_data\fake_zong' #訓練集的圖片所在路徑 輸入到student network
+dir_truth = r'D:\tsungyu\chromosome_data\cyclegan_data\real_chang' #訓練集的真實label所在路徑 輸入到teacher network
+dir_checkpoint = r'log\discussion_after_test\IN_ASL_exchange_input_m09996' #儲存模型的權重檔所在路徑
+load_path = r'D:\tsungyu\AdaIN_domain_adaptation\weights\in\data10000_100epoch\bestmodel.pth'
 
 def get_args():
     parser = argparse.ArgumentParser(description = 'Train the UNet on images and target masks')
@@ -29,13 +29,14 @@ def get_args():
     parser.add_argument('--classes','-c',type=int,default=2,help='Number of classes')
     parser.add_argument('--init_lr','-r',type = float, default=0.02,help='initial learning rate of model')
     parser.add_argument('--device', type=str,default='cuda:0',help='training on cpu or gpu')
-    parser.add_argument("--momentum", "-m", type=float, default=0.999, help="momentum parameter for updating teacher model.")
-    parser.add_argument('--loss', type=str,default='cross_entropy',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss, mae, asl]')
+    parser.add_argument("--momentum", "-m", type=float, default=0.9996, help="momentum parameter for updating teacher model.")
+    parser.add_argument('--loss', type=str,default='asl',help='loss metric, options: [kl_divergence, cross_entropy, dice_loss, mae, asl]')
+    parser.add_argument('--is_loss_weight', action="store_true",default=False,help='weight at every pixel added to calculate loss')
     parser.add_argument('--model', type=str,default='in_unet',help='models, option: simclr, in_unet')
     parser.add_argument('--pad_mode', action="store_true",default=True, help='unet used crop or pad at skip connection') # pretrained model , pad mode == True
     parser.add_argument('--normalize', action="store_true",dest="is_normalize",default=True, help='model normalize layer exist or not')
-    parser.add_argument('--fix_encoder', action="store_true",default=False, help='fix encoder')
-    parser.add_argument('--instanceloss', action="store_true",default=False, help='using instance seg loss during training')
+    parser.add_argument('--fix_encoder', action="store_true",default=True, help='fix encoder')
+    parser.add_argument('--instanceloss', action="store_true",default=False, help='In this project, is always False')
     parser.add_argument('--classmix', action="store_true",default=False, help='calculate miou')
 
     return parser.parse_args()
@@ -164,12 +165,15 @@ def training(net,
             # print(hard_label[:,0,1,1])
             # print(hard_label[:,1,1,1])
 
-            # entmap = prob2entropy(torch.softmax(logit_t.detach(),dim=1)) #上下限0~1
-            # entmap = torch.where(torch.isnan(entmap),torch.full_like(entmap,0),entmap) # NaN 補 0 # entropy高 權重越高
-            # # print(entmap.min(),entmap.max())
-            # weight = torch.ones_like(entmap) - entmap # entropy低 權重越高
+            # calcullate weight of every pixel im the image
+            weight = None
+            if args.is_loss_weight:
+                entmap = prob2entropy(torch.softmax(logit_t.detach(),dim=1)) #上下限0~1
+                entmap = torch.where(torch.isnan(entmap),torch.full_like(entmap,0),entmap) # NaN 補 0 # entropy高 權重越高
+                # print(entmap.min(),entmap.max())
+                weight = torch.ones_like(entmap) - entmap # entropy低 權重越高
 
-            loss = loss_fn(hard_label, logit_s)
+            loss = loss_fn(hard_label, logit_s,weight)
             if args.classmix:
                 with torch.no_grad():
                     teacher_predict = torch.argmax(torch.softmax(logit_t.detach(),dim=1),dim=1)
